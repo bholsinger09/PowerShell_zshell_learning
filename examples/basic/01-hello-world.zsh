@@ -18,5 +18,5 @@ greet() {
 }
 
 # Main execution
-greet "Zshell Developer"
+greet "${1:-Zshell Developer}"
 echo "This is your first Zshell script!"
