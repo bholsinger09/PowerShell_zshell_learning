@@ -149,7 +149,7 @@ close_all_apps() {
 show_app_sets() {
     info "Available application sets:"
     echo ""
-    for set_name in "${!APP_SETS[@]}"; do
+    for set_name in "${(@k)APP_SETS}"; do
         echo "  $set_name: ${APP_SETS[$set_name]}"
     done
 }
