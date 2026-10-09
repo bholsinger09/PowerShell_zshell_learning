@@ -293,6 +293,12 @@ main() {
     
     # Log to daily file too
     echo "$(date '+%Y-%m-%d %H:%M:%S'): Report generated successfully" >> "$LOG_FILE"
+    
+    # Update dashboard data
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "$SCRIPT_DIR/update-dashboard.sh" ]]; then
+        "$SCRIPT_DIR/update-dashboard.sh" 2>/dev/null || true
+    fi
 }
 
 # Run main
