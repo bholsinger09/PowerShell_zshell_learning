@@ -5,7 +5,8 @@
 # Run daily with: crontab or launchd
 # Usage: ./daily-automation.sh
 
-set -e
+# Better error handling instead of set -e
+trap 'echo "Error on line $LINENO"' ERR
 
 # Color codes
 RED='\033[0;31m'
@@ -32,7 +33,7 @@ print_header() {
     echo ""
     echo "Machine: $(hostname)"
     echo "User: $(whoami)"
-    echo "Uptime: $(uptime -p)"
+    echo "Uptime: $(uptime | sed 's/.*up //' | sed 's/,.*//')"
     echo ""
 }
 
@@ -45,7 +46,7 @@ check_performance() {
     
     # CPU Load
     echo -e "${YELLOW}CPU Load:${NC}"
-    LOAD=$(uptime | awk -F'load average:' '{print $2}')
+    LOAD=$(uptime | sed 's/.*load average: //')
     echo "  $LOAD"
     
     # Memory Usage
@@ -65,9 +66,8 @@ check_performance() {
     # Battery (if available)
     if command -v pmset &> /dev/null; then
         echo -e "${YELLOW}Battery:${NC}"
-        BATTERY=$(pmset -g batt | grep -o "[0-9]*%" | head -1)
-        IS_CHARGING=$(pmset -g batt | grep "charging\|discharging")
-        echo "  $BATTERY - $IS_CHARGING"
+        BATTERY=$(pmset -g batt | grep -o "[0-9]*%")
+        echo "  $BATTERY"
     fi
     
     echo ""
@@ -113,7 +113,7 @@ check_processes() {
     
     echo ""
     echo -e "${YELLOW}Top 5 Memory-Hungry Processes:${NC}"
-    ps aux --sort=-%mem | head -6 | tail -5 | awk '{printf "  %s: %.1fMB\n", $11, $6/1024}'
+    ps aux | awk '{printf "%s %.0f\n", $11, $6}' | sort -k2 -nr | head -5 | awk '{printf "  %s: %.0fMB\n", $1, $2/1024}'
     
     echo ""
 }
@@ -172,7 +172,7 @@ check_software_updates() {
     
     # iTerm2
     if [ -d "/Applications/iTerm.app" ]; then
-        ITERM_VERSION=$(/Applications/iTerm.app/Contents/Info.plist | grep -A1 "CFBundleShortVersionString" | tail -1 | sed 's/.*<string>//;s/<\/string>.*//' 2>/dev/null || mdls -name kMDItemVersion /Applications/iTerm.app 2>/dev/null | awk '{print $NF}')
+        ITERM_VERSION=$(mdls -name kMDItemVersion /Applications/iTerm.app 2>/dev/null | awk -F'"' '{print $2}' || echo "Unknown")
         echo "  iTerm2: $ITERM_VERSION"
     else
         echo "  iTerm2: Not installed"
@@ -180,15 +180,15 @@ check_software_updates() {
     
     # VS Code
     if [ -d "/Applications/Visual Studio Code.app" ]; then
-        VSCODE_VERSION=$(/Applications/Visual\ Studio\ Code.app/Contents/Resources/app/package.json | grep '"version"' | head -1 | sed 's/.*: "//;s/".*//' 2>/dev/null || echo "$(ls -1 /Applications/Visual\ Studio\ Code.app 2>/dev/null | wc -l) files")
+        VSCODE_VERSION=$(mdls -name kMDItemVersion "/Applications/Visual Studio Code.app" 2>/dev/null | awk -F'"' '{print $2}' || echo "Unknown")
         echo "  VS Code: $VSCODE_VERSION"
     else
         echo "  VS Code: Not installed"
     fi
     
     # Xcode
-    if command -v xcode-select &> /dev/null; then
-        XCODE_VERSION=$(xcode-select -p 2>/dev/null | xargs -I {} sh -c 'plutil -p {}/../../version.plist 2>/dev/null | grep CFBundleShortVersionString | cut -d"=" -f2' || echo "Latest")
+    if [ -d "/Applications/Xcode.app" ]; then
+        XCODE_VERSION=$(mdls -name kMDItemVersion /Applications/Xcode.app 2>/dev/null | awk -F'"' '{print $2}' || echo "Unknown")
         echo "  Xcode: $XCODE_VERSION"
     else
         echo "  Xcode: Not installed"
