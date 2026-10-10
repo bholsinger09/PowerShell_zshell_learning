@@ -114,15 +114,26 @@ async def handle_client(websocket):
     connected_clients.add(websocket)
     
     try:
-        # Send initial state
+        # Send initial state immediately
+        await log("Sending initial message to client")
         metrics = await read_latest_metrics()
+        
         if metrics:
             initial_message = json.dumps({
                 'type': 'initial',
                 'data': metrics,
                 'timestamp': datetime.now().isoformat()
             })
+            await log(f"Sending metrics to {client_addr}: {list(metrics.keys())}")
             await websocket.send(initial_message)
+        else:
+            # Send empty state if no metrics yet
+            await log("No metrics available yet, sending initial empty")
+            await websocket.send(json.dumps({
+                'type': 'initial',
+                'data': {'timestamp': 0, 'memory': 0, 'cpu_percent': 0, 'cpu_load': 0, 'disk': 0, 'battery': 0},
+                'timestamp': datetime.now().isoformat()
+            }))
         
         # Keep connection open and handle messages
         async for message in websocket:
