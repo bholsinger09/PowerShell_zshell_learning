@@ -11,3 +11,45 @@ Thumbs.db
 # PowerShell
 *.psm1
 *.psd1
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.tmp
+*.log
+.cache/
+
+# Build artifacts
+dist/
+build/
+
+# Python venv
+venv/
+env/
+ENV/
+
+# Local configuration
+.env.local
+local-config/
+
+# Generated reports
+*.html~
