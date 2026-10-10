@@ -231,91 +231,102 @@
         };
         const MAX_HISTORY = 30;
         let previousMetrics = null;
+        let refreshInterval = null;
+        const AUTO_REFRESH_INTERVAL = 2 * 60 * 1000; // 2 minutes in milliseconds
 
-        // Connect to WebSocket
-        function connectWebSocket() {
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//localhost:8765`;
-            
-            console.log(`Connecting to WebSocket: ${wsUrl}`);
-            
-            ws = new WebSocket(wsUrl);
-            
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-                updateStatus(true);
-                renderDashboard();
-            };
-            
-            ws.onmessage = (event) => {
-                try {
-                    const message = JSON.parse(event.data);
-                    handleMessage(message);
-                } catch (e) {
-                    console.error('Error parsing message:', e);
-                }
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                updateStatus(false);
-            };
-            
-            ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                updateStatus(false);
-                // Try to reconnect after 3 seconds
-                setTimeout(connectWebSocket, 3000);
-            };
+        // Async WebSocket connection
+        async function connectWebSocket() {
+            return new Promise((resolve) => {
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//localhost:8765`;
+                
+                console.log(`🔌 Connecting to WebSocket: ${wsUrl}`);
+                
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = async () => {
+                    console.log('✅ WebSocket connected');
+                    await updateStatus(true);
+                    await renderDashboard();
+                    resolve(true);
+                };
+                
+                ws.onmessage = async (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        await handleMessage(message);
+                    } catch (e) {
+                        console.error('Error parsing message:', e);
+                    }
+                };
+                
+                ws.onerror = async (error) => {
+                    console.error('❌ WebSocket error:', error);
+                    await updateStatus(false);
+                };
+                
+                ws.onclose = async () => {
+                    console.log('🔌 WebSocket disconnected');
+                    await updateStatus(false);
+                    // Try to reconnect after 3 seconds
+                    setTimeout(() => connectWebSocket(), 3000);
+                };
+            });
         }
 
-        function updateStatus(connected) {
+        async function updateStatus(connected) {
             const statusDot = document.getElementById('statusDot');
             const statusText = document.getElementById('statusText');
             
-            if (connected) {
-                statusDot.classList.remove('disconnected');
-                statusDot.classList.add('connected');
-                statusText.textContent = 'Live - Connected';
-                statusText.style.color = '#2ecc71';
-            } else {
-                statusDot.classList.remove('connected');
-                statusDot.classList.add('disconnected');
-                statusText.textContent = 'Offline - Reconnecting...';
-                statusText.style.color = '#e74c3c';
-            }
+            return new Promise((resolve) => {
+                if (connected) {
+                    statusDot.classList.remove('disconnected');
+                    statusDot.classList.add('connected');
+                    statusText.textContent = 'Live - Connected';
+                    statusText.style.color = '#2ecc71';
+                } else {
+                    statusDot.classList.remove('connected');
+                    statusDot.classList.add('disconnected');
+                    statusText.textContent = 'Offline - Reconnecting...';
+                    statusText.style.color = '#e74c3c';
+                }
+                resolve();
+            });
         }
 
-        function handleMessage(message) {
+        async function handleMessage(message) {
             if (message.type === 'metrics' || message.type === 'initial') {
-                updateMetrics(message.data);
+                await updateMetrics(message.data);
             }
         }
 
-        function updateMetrics(metrics) {
-            const timestamp = new Date(metrics.timestamp * 1000).toLocaleTimeString();
-            
-            // Add to history
-            metricHistory.timestamps.push(timestamp);
-            metricHistory.memory.push(metrics.memory);
-            metricHistory.cpu_percent.push(metrics.cpu_percent);
-            metricHistory.cpu_load.push(metrics.cpu_load);
-            metricHistory.disk.push(metrics.disk);
-            metricHistory.battery.push(metrics.battery);
-            
-            // Keep only recent history
-            if (metricHistory.timestamps.length > MAX_HISTORY) {
-                metricHistory.timestamps.shift();
-                metricHistory.memory.shift();
-                metricHistory.cpu_percent.shift();
-                metricHistory.cpu_load.shift();
-                metricHistory.disk.shift();
-                metricHistory.battery.shift();
-            }
-            
-            // Update display
-            updateStats(metrics);
-            updateCharts();
+        async function updateMetrics(metrics) {
+            return new Promise((resolve) => {
+                const timestamp = new Date(metrics.timestamp * 1000).toLocaleTimeString();
+                
+                // Add to history asynchronously
+                metricHistory.timestamps.push(timestamp);
+                metricHistory.memory.push(metrics.memory);
+                metricHistory.cpu_percent.push(metrics.cpu_percent);
+                metricHistory.cpu_load.push(metrics.cpu_load);
+                metricHistory.disk.push(metrics.disk);
+                metricHistory.battery.push(metrics.battery);
+                
+                // Keep only recent history
+                if (metricHistory.timestamps.length > MAX_HISTORY) {
+                    metricHistory.timestamps.shift();
+                    metricHistory.memory.shift();
+                    metricHistory.cpu_percent.shift();
+                    metricHistory.cpu_load.shift();
+                    metricHistory.disk.shift();
+                    metricHistory.battery.shift();
+                }
+                
+                // Update display
+                updateStats(metrics);
+                updateCharts();
+                resolve();
+            });
         }
 
         function updateStats(metrics) {
@@ -425,13 +436,33 @@
             });
         }
 
-        // Initialize
-        window.addEventListener('DOMContentLoaded', () => {
-            connectWebSocket();
+        // Initialize with auto-refresh
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // Initial connection
+                await connectWebSocket();
+                
+                // Set up auto-refresh every 2 minutes
+                console.log('⏰ Setting auto-refresh every 2 minutes');
+                refreshInterval = setInterval(async () => {
+                    console.log('🔄 Auto-refreshing page...');
+                    // Reload the page to get fresh connection and reset charts
+                    location.reload();
+                }, AUTO_REFRESH_INTERVAL);
+                
+                // Show refresh timer in console
+                const refreshMinutes = AUTO_REFRESH_INTERVAL / 60000;
+                console.log(`✅ Dashboard ready. Auto-refresh set to ${refreshMinutes} minutes.`);
+            } catch (error) {
+                console.error('Failed to initialize dashboard:', error);
+            }
         });
 
         // Cleanup on page unload
-        window.addEventListener('beforeunload', () => {
+        window.addEventListener('beforeunload', async () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
             if (ws) {
                 ws.close();
             }
