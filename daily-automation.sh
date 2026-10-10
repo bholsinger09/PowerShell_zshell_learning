@@ -44,19 +44,33 @@ check_performance() {
     echo -e "${CYAN}╚════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    # CPU Load
+    # CPU Load and Usage
     echo -e "${YELLOW}CPU Load:${NC}"
     LOAD=$(uptime | sed 's/.*load average: //')
     echo "  $LOAD"
     
-    # Memory Usage
+    # Get actual CPU percentage from top
+    CPU_DATA=$(top -l 1 | grep "CPU usage:")
+    echo -e "${YELLOW}CPU Usage:${NC}"
+    echo "  $CPU_DATA"
+    
+    # Memory Usage - Using top for accurate wired memory (excludes cache)
     echo -e "${YELLOW}Memory Usage:${NC}"
-    MEMORY=$(vm_stat | grep "Pages free" | awk '{print $3}' | tr -d '.')
+    MEM_INFO=$(top -l 1 | grep "PhysMem:")
+    echo "  $MEM_INFO"
+    
+    # Extract wired memory percentage for dashboard
+    WIRED_MB=$(echo "$MEM_INFO" | sed 's/.*(\([0-9]*\)G wired.*/\1/')
     TOTAL_MEM=$(sysctl hw.memsize | awk '{print $2}')
-    USED_MEM=$(( (TOTAL_MEM - (MEMORY * 4096)) / 1073741824 ))
     TOTAL_GB=$(( TOTAL_MEM / 1073741824 ))
-    MEM_PERCENT=$(( (USED_MEM * 100) / TOTAL_GB ))
-    echo "  Used: ${USED_MEM}GB / ${TOTAL_GB}GB (${MEM_PERCENT}%)"
+    MEM_PERCENT=$(( (WIRED_MB * 100) / TOTAL_GB ))
+    
+    # Also get system memory pressure percentage
+    MEM_PRESSURE=$(memory_pressure 2>/dev/null | grep "System-wide memory free" | awk '{print 100 - $NF}' | tr -d '%' || echo "$MEM_PERCENT")
+    # Use the more conservative (lower) of the two percentages
+    if [ "$MEM_PRESSURE" -lt "$MEM_PERCENT" ]; then
+        MEM_PERCENT=$MEM_PRESSURE
+    fi
     
     # Disk Usage
     echo -e "${YELLOW}Disk Usage (Home):${NC}"

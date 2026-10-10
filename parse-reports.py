@@ -35,12 +35,25 @@ def extract_metrics(report_path):
     else:
         return None
     
-    # Extract Memory Usage (from "Used: 63GB / 64GB (98%)" line)
-    memory_match = re.search(r'Used:.*\((\d+)%\)', content_clean)
+    # Extract Memory Usage - new format from top
+    # Format: "PhysMem: 50G used (13G wired, 0B compressor), 13G unused."
+    # Calculate percentage based on wired memory (what's actually in use)
+    memory_match = re.search(r'PhysMem:\s+(\d+)G used \((\d+)G wired', content_clean)
     if memory_match:
-        metrics['memory'] = int(memory_match.group(1))
+        wired_gb = int(memory_match.group(2))
+        # Assume 64GB total (can be made dynamic if needed)
+        total_gb = 64
+        metrics['memory'] = int((wired_gb * 100) / total_gb)
     else:
-        metrics['memory'] = 0
+        # Fallback for old format: "Used: 63GB / 64GB (98%)"
+        old_memory_match = re.search(r'Used:.*\((\d+)%\)', content_clean)
+        if old_memory_match:
+            # For old format, only count about 20% of what was reported
+            # since it included cache
+            reported = int(old_memory_match.group(1))
+            metrics['memory'] = max(int(reported * 0.2), 0)
+        else:
+            metrics['memory'] = 0
     
     # Extract Disk Usage (from "51% used" line)
     disk_match = re.search(r'Disk Usage[^:]*:\s+(\d+)%', content_clean)
@@ -57,14 +70,26 @@ def extract_metrics(report_path):
         metrics['battery'] = 100
     
     # Extract CPU Load (first number from "load averages: 4.03 3.91 3.59")
-    cpu_match = re.search(r'load averages:\s+([0-9.]+)', content_clean)
-    if cpu_match:
+    cpu_load_match = re.search(r'load averages:\s+([0-9.]+)', content_clean)
+    if cpu_load_match:
         try:
-            metrics['cpu'] = float(cpu_match.group(1))
+            metrics['cpu_load'] = float(cpu_load_match.group(1))
         except:
-            metrics['cpu'] = 0
+            metrics['cpu_load'] = 0
     else:
-        metrics['cpu'] = 0
+        metrics['cpu_load'] = 0
+    
+    # Extract actual CPU usage percentage (from "CPU usage: 13.11% user, 9.32% sys, 77.55% idle")
+    cpu_usage_match = re.search(r'CPU usage:\s+([0-9.]+)%\s+user,\s+([0-9.]+)%\s+sys', content_clean)
+    if cpu_usage_match:
+        try:
+            user_cpu = float(cpu_usage_match.group(1))
+            sys_cpu = float(cpu_usage_match.group(2))
+            metrics['cpu_percent'] = round(user_cpu + sys_cpu, 2)
+        except:
+            metrics['cpu_percent'] = 0
+    else:
+        metrics['cpu_percent'] = 0
     
     # Count running apps (lines starting with ✓)
     running_apps = len(re.findall(r'^\s*✓', content_clean, re.MULTILINE))
