@@ -74,36 +74,48 @@ get_battery_percent() {
 
 get_network_stats() {
     # Get detailed network statistics: download, upload speeds and active connections
-    # Returns: down_mbps|up_mbps|total_mbps|connection_count|established_count
+    # Uses netstat -i to get packet counts from all active interfaces
     
     local bytes_in=0
     local bytes_out=0
     
-    # Parse ifconfig for bytes
+    # Parse netstat -i output for cumulative bytes
+    # netstat -i shows Ipkts (incoming packets) and Opkts (outgoing packets)
+    # We'll use this as a proxy for bytes (packet count * avg packet size ~500 bytes)
     while IFS= read -r line; do
-        if [[ $line =~ "bytes in"([0-9]+)"out"([0-9]+) ]]; then
-            bytes_in=$((bytes_in + ${BASH_REMATCH[1]}))
-            bytes_out=$((bytes_out + ${BASH_REMATCH[2]}))
+        # Skip header and loopback
+        if [[ $line =~ "^en" ]]; then
+            # en0 line format: en0 1500 <Link> ca:e7:14:e6:84:de Ipkts Ierrs Opkts Oerrs
+            local ipkts=$(echo "$line" | awk '{print $5}')
+            local opkts=$(echo "$line" | awk '{print $7}')
+            # Estimate bytes: packets * average packet size (500 bytes)
+            bytes_in=$((bytes_in + ipkts * 500))
+            bytes_out=$((bytes_out + opkts * 500))
         fi
-    done < <(ifconfig | grep bytes)
+    done < <(netstat -i)
     
     # Calculate throughput (Mbps) from difference
-    local current_time=$(date +%s)
-    local time_diff=$((current_time - PREV_TIMESTAMP))
+    local current_time=$(date +%s%N | cut -b1-13)  # milliseconds
+    local time_diff_ms=$((current_time - PREV_TIMESTAMP))
+    local time_diff_sec=$((time_diff_ms / 1000))
     
     local download_mbps=0
     local upload_mbps=0
     local total_mbps=0
     
-    if [[ $PREV_TIMESTAMP -gt 0 && $time_diff -gt 0 ]]; then
+    if [[ $PREV_TIMESTAMP -gt 0 && $time_diff_sec -gt 0 ]]; then
         local bytes_diff_in=$((bytes_in - PREV_BYTES_IN))
         local bytes_diff_out=$((bytes_out - PREV_BYTES_OUT))
         
-        # Convert: (bytes / seconds) / (1,000,000 / 8) = Mbps
-        # Simplified: bytes / time_diff / 125000
-        download_mbps=$((bytes_diff_in / time_diff / 125000))
-        upload_mbps=$((bytes_diff_out / time_diff / 125000))
-        total_mbps=$((download_mbps + upload_mbps))
+        # Convert bytes to Mbps: (bytes / seconds) * 8 / 1,000,000
+        # Simplified: (bytes * 8) / (1000000 * seconds)
+        if [[ $bytes_diff_in -gt 0 ]]; then
+            download_mbps=$(echo "scale=2; ($bytes_diff_in * 8) / (1000000 * $time_diff_sec)" | bc)
+        fi
+        if [[ $bytes_diff_out -gt 0 ]]; then
+            upload_mbps=$(echo "scale=2; ($bytes_diff_out * 8) / (1000000 * $time_diff_sec)" | bc)
+        fi
+        total_mbps=$(echo "scale=2; $download_mbps + $upload_mbps" | bc)
     fi
     
     # Get connection statistics
