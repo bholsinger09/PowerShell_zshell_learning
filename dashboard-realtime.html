@@ -257,11 +257,14 @@
             cpu_load: [],
             disk: [],
             battery: [],
-            network_in_mbps: [],
-            network_out_mbps: []
+            network_down_mbps: [],
+            network_up_mbps: [],
+            network_total_mbps: []
         };
         let topProcesses = [];
+        let activeConnections = [];
         let systemUptime = 0;
+        let connectionCount = 0;
         const MAX_HISTORY = 30;
         let previousMetrics = null;
         let refreshInterval = null;
@@ -344,10 +347,26 @@
                 metricHistory.cpu_load.push(metrics.cpu_load);
                 metricHistory.disk.push(metrics.disk);
                 metricHistory.battery.push(metrics.battery);
-                metricHistory.network_in_mbps.push(metrics.network_in_mbps || 0);
-                metricHistory.network_out_mbps.push(metrics.network_out_mbps || 0);
+                metricHistory.network_down_mbps.push(metrics.network_down_mbps || 0);
+                metricHistory.network_up_mbps.push(metrics.network_up_mbps || 0);
+                metricHistory.network_total_mbps.push((metrics.network_total_mbps || 0));
                 
-                // Store process and uptime data
+                // Store connection and uptime data
+                connectionCount = metrics.connection_count || 0;
+                systemUptime = metrics.uptime_hours || 0;
+                
+                // Parse active connections
+                if (metrics.network_connections) {
+                    activeConnections = metrics.network_connections.split('|').slice(0, 10).map(c => {
+                        const parts = c.split(':');
+                        return {
+                            host: parts[0] || 'N/A',
+                            proto: parts[1] || 'N/A'
+                        };
+                    }).filter(c => c.host !== 'N/A');
+                }
+                
+                // Store process data
                 if (metrics.top_processes) {
                     topProcesses = metrics.top_processes.split('|').slice(0, 5).map(p => {
                         const parts = p.split(':');
@@ -358,7 +377,6 @@
                         };
                     });
                 }
-                systemUptime = metrics.uptime_hours || 0;
                 
                 // Keep only recent history
                 if (metricHistory.timestamps.length > MAX_HISTORY) {
@@ -368,14 +386,16 @@
                     metricHistory.cpu_load.shift();
                     metricHistory.disk.shift();
                     metricHistory.battery.shift();
-                    metricHistory.network_in_mbps.shift();
-                    metricHistory.network_out_mbps.shift();
+                    metricHistory.network_down_mbps.shift();
+                    metricHistory.network_up_mbps.shift();
+                    metricHistory.network_total_mbps.shift();
                 }
                 
                 // Update display
                 updateStats(metrics);
                 updateCharts();
                 updateProcessTable();
+                updateConnectionsTable();
                 resolve();
             });
         }
@@ -383,14 +403,16 @@
         function updateStats(metrics) {
             // Only update the stat boxes, don't recreate canvas elements
             const statBoxes = document.querySelectorAll('.stat-value');
-            if (statBoxes.length >= 7) {
+            if (statBoxes.length >= 9) {
                 statBoxes[0].textContent = metrics.memory + '%';
                 statBoxes[1].textContent = metrics.disk + '%';
                 statBoxes[2].textContent = metrics.cpu_percent.toFixed(1) + '%';
                 statBoxes[3].textContent = metrics.cpu_load.toFixed(2);
                 statBoxes[4].textContent = metrics.battery + '%';
-                statBoxes[5].textContent = (metrics.network_in_mbps || 0).toFixed(1) + ' Mbps';
-                statBoxes[6].textContent = (metrics.network_out_mbps || 0).toFixed(1) + ' Mbps';
+                statBoxes[5].textContent = (metrics.network_down_mbps || 0).toFixed(2) + ' Mbps';
+                statBoxes[6].textContent = (metrics.network_up_mbps || 0).toFixed(2) + ' Mbps';
+                statBoxes[7].textContent = (metrics.network_total_mbps || 0).toFixed(2) + ' Mbps';
+                statBoxes[8].textContent = (metrics.connection_count || 0);
             }
             
             // Update alerts
@@ -400,6 +422,9 @@
             }
             if (metrics.cpu_percent > 80) {
                 alertHtml += '<div class="alert-box critical">⚠️ High CPU usage: ' + metrics.cpu_percent.toFixed(1) + '%</div>';
+            }
+            if ((metrics.network_total_mbps || 0) > 50) {
+                alertHtml += '<div class="alert-box critical">⚠️ High network activity: ' + (metrics.network_total_mbps).toFixed(1) + ' Mbps</div>';
             }
             
             const alertsContainer = document.getElementById('alertsContainer');
@@ -418,8 +443,10 @@
             html += createStatBox('CPU %', metrics.cpu_percent.toFixed(1) + '%', '#ffa502');
             html += createStatBox('CPU Load', metrics.cpu_load.toFixed(2), '#43e97b');
             html += createStatBox('Battery', metrics.battery + '%', '#fa709a');
-            html += createStatBox('↓ Network', '0.0 Mbps', '#9b59b6');
-            html += createStatBox('↑ Network', '0.0 Mbps', '#3498db');
+            html += createStatBox('⬇️ Down', '0.00 Mbps', '#9b59b6');
+            html += createStatBox('⬆️ Up', '0.00 Mbps', '#3498db');
+            html += createStatBox('🌐 Total', '0.00 Mbps', '#1abc9c');
+            html += createStatBox('🔌 Connections', '0', '#e74c3c');
             html += '</div>';
             
             html += '<div id="alertsContainer"></div>';
@@ -435,7 +462,10 @@
             html += '</div>';
             
             // Add processes table
-            html += '<div class="processes-section"><h2>🔄 Top Processes (CPU %)</h2><div id="processesContainer"></div></div>';
+            html += '<div class="processes-section"><h2>🔄 Top CPU Processes</h2><div id="processesContainer"></div></div>';
+            
+            // Add active connections section
+            html += '<div class="processes-section"><h2>🌐 Active Connections (Top 10)</h2><div id="connectionsContainer"></div></div>';
             
             mainContent.innerHTML = html;
         }
@@ -455,8 +485,7 @@
                 { id: 'diskChart', label: 'Disk %', data: metricHistory.disk, color: '#4facfe', max: 100 },
                 { id: 'cpuPercentChart', label: 'CPU %', data: metricHistory.cpu_percent, color: '#ffa502', max: 100 },
                 { id: 'cpuLoadChart', label: 'CPU Load', data: metricHistory.cpu_load, color: '#43e97b', max: 10 },
-                { id: 'batteryChart', label: 'Battery %', data: metricHistory.battery, color: '#fa709a', max: 100 },
-                { id: 'networkChart', label: 'Network (Mbps)', data: metricHistory.network_in_mbps, color: '#1abc9c', max: null }
+                { id: 'batteryChart', label: 'Battery %', data: metricHistory.battery, color: '#fa709a', max: 100 }
             ];
             
             chartConfigs.forEach(config => {
@@ -506,6 +535,65 @@
                     });
                 }
             });
+            
+            // Update network chart with download + upload datasets
+            const networkCanvas = document.getElementById('networkChart');
+            if (networkCanvas) {
+                if (charts.networkChart) {
+                    charts.networkChart.data.labels = metricHistory.timestamps;
+                    charts.networkChart.data.datasets[0].data = metricHistory.network_down_mbps;
+                    charts.networkChart.data.datasets[1].data = metricHistory.network_up_mbps;
+                    charts.networkChart.update('none');
+                } else {
+                    charts.networkChart = new Chart(networkCanvas, {
+                        type: 'line',
+                        data: {
+                            labels: metricHistory.timestamps,
+                            datasets: [
+                                {
+                                    label: 'Download (Mbps)',
+                                    data: metricHistory.network_down_mbps,
+                                    borderColor: '#3498db',
+                                    backgroundColor: '#3498db15',
+                                    borderWidth: 2,
+                                    fill: true,
+                                    tension: 0.4,
+                                    pointRadius: 3,
+                                    pointBackgroundColor: '#3498db',
+                                    pointBorderColor: '#fff',
+                                    pointBorderWidth: 2
+                                },
+                                {
+                                    label: 'Upload (Mbps)',
+                                    data: metricHistory.network_up_mbps,
+                                    borderColor: '#e74c3c',
+                                    backgroundColor: '#e74c3c15',
+                                    borderWidth: 2,
+                                    fill: true,
+                                    tension: 0.4,
+                                    pointRadius: 3,
+                                    pointBackgroundColor: '#e74c3c',
+                                    pointBorderColor: '#fff',
+                                    pointBorderWidth: 2
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: { duration: 0 },
+                            plugins: { legend: { display: true, position: 'bottom' } },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                                },
+                                x: { grid: { display: false } }
+                            }
+                        }
+                    });
+                }
+            }
         }
 
         function updateProcessTable() {
@@ -525,6 +613,33 @@
             });
             
             html += '</table>';
+            container.innerHTML = html;
+        }
+
+        function updateConnectionsTable() {
+            const container = document.getElementById('connectionsContainer');
+            if (!container) return;
+            
+            if (activeConnections.length === 0) {
+                container.innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No active connections detected</p>';
+                return;
+            }
+            
+            let html = '<table style="width:100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">';
+            html += '<tr style="background: #f5f7fa; border-bottom: 2px solid #e0e6ed;"><th style="padding: 12px; text-align: left;">Host/IP</th><th style="padding: 12px; text-align: center;">Protocol</th><th style="padding: 12px; text-align: center;">Status</th></tr>';
+            
+            activeConnections.forEach((conn, idx) => {
+                const bgColor = idx % 2 === 0 ? '#fff' : '#f9fafb';
+                const protoColor = conn.proto === 'TCP' ? '#3498db' : '#1abc9c';
+                html += `<tr style="background: ${bgColor}; border-bottom: 1px solid #e0e6ed;">`;
+                html += `<td style="padding: 12px; font-family: monospace; font-size: 12px;">${conn.host}</td>`;
+                html += `<td style="padding: 12px; text-align: center; color: ${protoColor}; font-weight: 600;">${conn.proto}</td>`;
+                html += `<td style="padding: 12px; text-align: center; color: #2ecc71; font-weight: 600;">🔗 Connected</td>`;
+                html += '</tr>';
+            });
+            
+            html += '</table>';
+            html += `<p style="color: #999; font-size: 12px; padding: 12px 0; margin: 0;">Total active connections: ${connectionCount}</p>`;
             container.innerHTML = html;
         }
 

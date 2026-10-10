@@ -72,8 +72,10 @@ get_battery_percent() {
     echo "${battery:-100}"
 }
 
-get_network_throughput() {
-    # Get network bytes in/out for all active interfaces
+get_network_stats() {
+    # Get detailed network statistics: download, upload speeds and active connections
+    # Returns: down_mbps|up_mbps|total_mbps|connection_count|established_count
+    
     local bytes_in=0
     local bytes_out=0
     
@@ -89,22 +91,58 @@ get_network_throughput() {
     local current_time=$(date +%s)
     local time_diff=$((current_time - PREV_TIMESTAMP))
     
-    local throughput_in=0
-    local throughput_out=0
+    local download_mbps=0
+    local upload_mbps=0
+    local total_mbps=0
     
     if [[ $PREV_TIMESTAMP -gt 0 && $time_diff -gt 0 ]]; then
-        # Convert bytes to Mbps: (bytes_diff / time_diff) / (1024*1024) * 8
         local bytes_diff_in=$((bytes_in - PREV_BYTES_IN))
         local bytes_diff_out=$((bytes_out - PREV_BYTES_OUT))
-        throughput_in=$((bytes_diff_in / time_diff / 131072))  # Approximate
-        throughput_out=$((bytes_diff_out / time_diff / 131072))
+        
+        # Convert: (bytes / seconds) / (1,000,000 / 8) = Mbps
+        # Simplified: bytes / time_diff / 125000
+        download_mbps=$((bytes_diff_in / time_diff / 125000))
+        upload_mbps=$((bytes_diff_out / time_diff / 125000))
+        total_mbps=$((download_mbps + upload_mbps))
     fi
+    
+    # Get connection statistics
+    local connection_count=$(netstat -an 2>/dev/null | grep -c "ESTABLISHED" || echo "0")
     
     PREV_BYTES_IN=$bytes_in
     PREV_BYTES_OUT=$bytes_out
     PREV_TIMESTAMP=$current_time
     
-    echo "$throughput_in|$throughput_out"
+    echo "$download_mbps|$upload_mbps|$total_mbps|$connection_count"
+}
+
+get_active_connections() {
+    # Get top 5 active connections (IP:port and protocol)
+    # Returns: "ip:port:proto|ip:port:proto|..."
+    
+    netstat -an 2>/dev/null | grep "ESTABLISHED" | awk '{
+        # Parse: proto local_ip.port remote_ip.port state
+        # Split on space and extract relevant fields
+        split($4, local, ".")
+        split($5, remote, ".")
+        proto = tolower($1)
+        if (proto ~ /tcp/) proto = "TCP"
+        if (proto ~ /udp/) proto = "UDP"
+        # Get last 2 parts of remote IP (significant for tracking)
+        n = split($5, parts, ".")
+        if (n >= 2) {
+            remote_end = parts[n-1] "." parts[n]
+            printf "%s:%s|", remote_end, proto
+        }
+    }' | sed 's/|$//' | cut -d'|' -f1-5
+}
+
+get_network_throughput() {
+    # Legacy function - delegates to new get_network_stats
+    local stats=$(get_network_stats)
+    local download=$(echo "$stats" | cut -d'|' -f1)
+    local upload=$(echo "$stats" | cut -d'|' -f2)
+    echo "$download|$upload"
 }
 
 get_top_processes() {
@@ -140,31 +178,23 @@ monitoring_loop() {
         local cpu_load=$(get_cpu_load)
         local disk=$(get_disk_percent)
         local battery=$(get_battery_percent)
-        local network=$(get_network_throughput)
-        local network_in=$(echo "$network" | cut -d'|' -f1)
-        local network_out=$(echo "$network" | cut -d'|' -f2)
-        local top_processes=$(get_top_processes)
-        local uptime=$(get_system_info)
         
-        # Create JSON
-        local json=$(cat <<EOF
-{
-  "timestamp": $timestamp,
-  "memory": $memory,
-  "cpu_percent": $cpu_percent,
-  "cpu_load": $cpu_load,
-  "disk": $disk,
-  "battery": $battery,
-  "network_in_mbps": $network_in,
-  "network_out_mbps": $network_out,
-  "top_processes": "$top_processes",
-  "uptime_hours": $uptime
-}
-EOF
-        )
+        # Enhanced network stats
+        local network_stats=$(get_network_stats)
+        local network_down=$(echo "$network_stats" | cut -d'|' -f1 | tr -d '\n')
+        local network_up=$(echo "$network_stats" | cut -d'|' -f2 | tr -d '\n')
+        local network_total=$(echo "$network_stats" | cut -d'|' -f3 | tr -d '\n')
+        local connection_count=$(echo "$network_stats" | cut -d'|' -f4 | tr -d '\n')
         
-        # Append to metrics file
-        echo "$json" >> "$METRICS_FILE"
+        local active_connections=$(get_active_connections | tr -d '\n')
+        local top_processes=$(get_top_processes | tr -d '\n')
+        local uptime=$(get_system_info | tr -d '\n')
+        
+        # Create JSON with enhanced network info (using printf for clean output)
+        printf '{\n  "timestamp": %s,\n  "memory": %s,\n  "cpu_percent": %s,\n  "cpu_load": %s,\n  "disk": %s,\n  "battery": %s,\n  "network_down_mbps": %s,\n  "network_up_mbps": %s,\n  "network_total_mbps": %s,\n  "network_connections": "%s",\n  "connection_count": %s,\n  "top_processes": "%s",\n  "uptime_hours": %s\n}\n' \
+            "$timestamp" "$memory" "$cpu_percent" "$cpu_load" "$disk" "$battery" \
+            "$network_down" "$network_up" "$network_total" "$active_connections" \
+            "$connection_count" "$top_processes" "$uptime" >> "$METRICS_FILE"
         
         # Wait for next collection
         sleep $COLLECTION_INTERVAL
