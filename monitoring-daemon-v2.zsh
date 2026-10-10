@@ -116,11 +116,23 @@ get_network_stats() {
         # Simplified: (bytes * 8) / (1000000 * seconds)
         if [[ $bytes_diff_in -gt 0 ]]; then
             download_mbps=$(echo "scale=2; ($bytes_diff_in * 8) / (1000000 * $time_diff_sec)" | bc)
+            # Ensure format is 0.XX not .XX for JSON validity
+            if [[ $download_mbps == .* ]]; then
+                download_mbps="0${download_mbps}"
+            fi
         fi
         if [[ $bytes_diff_out -gt 0 ]]; then
             upload_mbps=$(echo "scale=2; ($bytes_diff_out * 8) / (1000000 * $time_diff_sec)" | bc)
+            # Ensure format is 0.XX not .XX for JSON validity
+            if [[ $upload_mbps == .* ]]; then
+                upload_mbps="0${upload_mbps}"
+            fi
         fi
         total_mbps=$(echo "scale=2; $download_mbps + $upload_mbps" | bc)
+        # Fix total too
+        if [[ $total_mbps == .* ]]; then
+            total_mbps="0${total_mbps}"
+        fi
     fi
     
     # Get connection statistics
