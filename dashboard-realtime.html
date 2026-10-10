@@ -144,6 +144,36 @@
             margin-bottom: 15px;
         }
 
+        .processes-section {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-top: 30px;
+        }
+
+        .processes-section h2 {
+            color: #1e3c72;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+
+        .processes-section table {
+            width: 100%;
+            background: white;
+        }
+
+        .processes-section th {
+            background: #f5f7fa;
+            color: #1e3c72;
+            font-weight: 600;
+            border-bottom: 2px solid #e0e6ed;
+        }
+
+        .processes-section td {
+            border-bottom: 1px solid #e0e6ed;
+        }
+
         .alert-box {
             background: #fff3cd;
             border-left: 4px solid #ffc107;
@@ -197,7 +227,6 @@
             }
         }
     </style>
-</head>
 <body>
     <div class="container">
         <!-- Header -->
@@ -227,8 +256,12 @@
             cpu_percent: [],
             cpu_load: [],
             disk: [],
-            battery: []
+            battery: [],
+            network_in_mbps: [],
+            network_out_mbps: []
         };
+        let topProcesses = [];
+        let systemUptime = 0;
         const MAX_HISTORY = 30;
         let previousMetrics = null;
         let refreshInterval = null;
@@ -311,6 +344,21 @@
                 metricHistory.cpu_load.push(metrics.cpu_load);
                 metricHistory.disk.push(metrics.disk);
                 metricHistory.battery.push(metrics.battery);
+                metricHistory.network_in_mbps.push(metrics.network_in_mbps || 0);
+                metricHistory.network_out_mbps.push(metrics.network_out_mbps || 0);
+                
+                // Store process and uptime data
+                if (metrics.top_processes) {
+                    topProcesses = metrics.top_processes.split('|').slice(0, 5).map(p => {
+                        const parts = p.split(':');
+                        return {
+                            name: parts[0] || 'N/A',
+                            cpu: parseFloat(parts[1]) || 0,
+                            memory: parseFloat(parts[2]) || 0
+                        };
+                    });
+                }
+                systemUptime = metrics.uptime_hours || 0;
                 
                 // Keep only recent history
                 if (metricHistory.timestamps.length > MAX_HISTORY) {
@@ -320,11 +368,14 @@
                     metricHistory.cpu_load.shift();
                     metricHistory.disk.shift();
                     metricHistory.battery.shift();
+                    metricHistory.network_in_mbps.shift();
+                    metricHistory.network_out_mbps.shift();
                 }
                 
                 // Update display
                 updateStats(metrics);
                 updateCharts();
+                updateProcessTable();
                 resolve();
             });
         }
@@ -332,12 +383,14 @@
         function updateStats(metrics) {
             // Only update the stat boxes, don't recreate canvas elements
             const statBoxes = document.querySelectorAll('.stat-value');
-            if (statBoxes.length >= 5) {
+            if (statBoxes.length >= 7) {
                 statBoxes[0].textContent = metrics.memory + '%';
                 statBoxes[1].textContent = metrics.disk + '%';
                 statBoxes[2].textContent = metrics.cpu_percent.toFixed(1) + '%';
                 statBoxes[3].textContent = metrics.cpu_load.toFixed(2);
                 statBoxes[4].textContent = metrics.battery + '%';
+                statBoxes[5].textContent = (metrics.network_in_mbps || 0).toFixed(1) + ' Mbps';
+                statBoxes[6].textContent = (metrics.network_out_mbps || 0).toFixed(1) + ' Mbps';
             }
             
             // Update alerts
@@ -365,6 +418,8 @@
             html += createStatBox('CPU %', metrics.cpu_percent.toFixed(1) + '%', '#ffa502');
             html += createStatBox('CPU Load', metrics.cpu_load.toFixed(2), '#43e97b');
             html += createStatBox('Battery', metrics.battery + '%', '#fa709a');
+            html += createStatBox('↓ Network', '0.0 Mbps', '#9b59b6');
+            html += createStatBox('↑ Network', '0.0 Mbps', '#3498db');
             html += '</div>';
             
             html += '<div id="alertsContainer"></div>';
@@ -376,7 +431,11 @@
             html += '<div class="card"><h2>📊 CPU Usage %</h2><div class="chart-container"><canvas id="cpuPercentChart"></canvas></div></div>';
             html += '<div class="card"><h2>⚙️ CPU Load</h2><div class="chart-container"><canvas id="cpuLoadChart"></canvas></div></div>';
             html += '<div class="card"><h2>🔋 Battery Level</h2><div class="chart-container"><canvas id="batteryChart"></canvas></div></div>';
+            html += '<div class="card"><h2>🌐 Network (Mbps)</h2><div class="chart-container"><canvas id="networkChart"></canvas></div></div>';
             html += '</div>';
+            
+            // Add processes table
+            html += '<div class="processes-section"><h2>🔄 Top Processes (CPU %)</h2><div id="processesContainer"></div></div>';
             
             mainContent.innerHTML = html;
         }
@@ -392,11 +451,12 @@
 
         function updateCharts() {
             const chartConfigs = [
-                { id: 'memoryChart', label: 'Memory %', data: metricHistory.memory, color: '#f5576c' },
-                { id: 'diskChart', label: 'Disk %', data: metricHistory.disk, color: '#4facfe' },
-                { id: 'cpuPercentChart', label: 'CPU %', data: metricHistory.cpu_percent, color: '#ffa502' },
-                { id: 'cpuLoadChart', label: 'CPU Load', data: metricHistory.cpu_load, color: '#43e97b' },
-                { id: 'batteryChart', label: 'Battery %', data: metricHistory.battery, color: '#fa709a' }
+                { id: 'memoryChart', label: 'Memory %', data: metricHistory.memory, color: '#f5576c', max: 100 },
+                { id: 'diskChart', label: 'Disk %', data: metricHistory.disk, color: '#4facfe', max: 100 },
+                { id: 'cpuPercentChart', label: 'CPU %', data: metricHistory.cpu_percent, color: '#ffa502', max: 100 },
+                { id: 'cpuLoadChart', label: 'CPU Load', data: metricHistory.cpu_load, color: '#43e97b', max: 10 },
+                { id: 'batteryChart', label: 'Battery %', data: metricHistory.battery, color: '#fa709a', max: 100 },
+                { id: 'networkChart', label: 'Network (Mbps)', data: metricHistory.network_in_mbps, color: '#1abc9c', max: null }
             ];
             
             chartConfigs.forEach(config => {
@@ -410,6 +470,7 @@
                     charts[config.id].update('none'); // Update without animation
                 } else {
                     // Create new chart
+                    const yMax = config.max || Math.max(...config.data, 10);
                     charts[config.id] = new Chart(canvas, {
                         type: 'line',
                         data: {
@@ -436,7 +497,7 @@
                             scales: {
                                 y: {
                                     beginAtZero: true,
-                                    max: 100,
+                                    max: config.max || undefined,
                                     grid: { color: 'rgba(0, 0, 0, 0.05)' }
                                 },
                                 x: { grid: { display: false } }
@@ -445,6 +506,26 @@
                     });
                 }
             });
+        }
+
+        function updateProcessTable() {
+            const container = document.getElementById('processesContainer');
+            if (!container || topProcesses.length === 0) return;
+            
+            let html = '<table style="width:100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">';
+            html += '<tr style="background: #f5f7fa; border-bottom: 2px solid #e0e6ed;"><th style="padding: 12px; text-align: left;">Process</th><th style="padding: 12px; text-align: center;">CPU %</th><th style="padding: 12px; text-align: center;">Memory %</th></tr>';
+            
+            topProcesses.forEach((proc, idx) => {
+                const bgColor = idx % 2 === 0 ? '#fff' : '#f9fafb';
+                html += `<tr style="background: ${bgColor}; border-bottom: 1px solid #e0e6ed;">`;
+                html += `<td style="padding: 12px; font-family: monospace; font-size: 12px;">${proc.name}</td>`;
+                html += `<td style="padding: 12px; text-align: center; color: #f5576c; font-weight: 600;">${proc.cpu.toFixed(1)}%</td>`;
+                html += `<td style="padding: 12px; text-align: center; color: #4facfe; font-weight: 600;">${proc.memory.toFixed(1)}%</td>`;
+                html += '</tr>';
+            });
+            
+            html += '</table>';
+            container.innerHTML = html;
         }
 
         async function renderDashboard() {
