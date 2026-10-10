@@ -295,7 +295,7 @@
         }
 
         async function handleMessage(message) {
-            if (message.type === 'metrics' || message.type === 'initial') {
+            if (message.type === 'initial' || message.type === 'metrics' || message.type === 'update') {
                 await updateMetrics(message.data);
             }
         }
