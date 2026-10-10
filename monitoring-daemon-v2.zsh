@@ -12,11 +12,6 @@ COLLECTION_INTERVAL=3  # seconds
 # Ensure report directory exists
 mkdir -p "$REPORT_DIR"
 
-# Previous network stats for throughput calculation
-declare -g PREV_BYTES_IN=0
-declare -g PREV_BYTES_OUT=0
-declare -g PREV_TIMESTAMP=0
-
 # ============================================================================
 # METRIC EXTRACTION FUNCTIONS
 # ============================================================================
@@ -75,37 +70,47 @@ get_battery_percent() {
 get_network_stats() {
     # Get detailed network statistics: download, upload speeds and active connections
     # Uses netstat -i to get packet counts from all active interfaces
+    # Stores previous state in a file to survive across function calls
     
     local bytes_in=0
     local bytes_out=0
     
-    # Parse netstat -i output for cumulative bytes
-    # netstat -i shows Ipkts (incoming packets) and Opkts (outgoing packets)
-    # We'll use this as a proxy for bytes (packet count * avg packet size ~500 bytes)
-    while IFS= read -r line; do
-        # Skip header and loopback
-        if [[ $line =~ "^en" ]]; then
-            # en0 line format: en0 1500 <Link> ca:e7:14:e6:84:de Ipkts Ierrs Opkts Oerrs
-            local ipkts=$(echo "$line" | awk '{print $5}')
-            local opkts=$(echo "$line" | awk '{print $7}')
-            # Estimate bytes: packets * average packet size (500 bytes)
-            bytes_in=$((bytes_in + ipkts * 500))
-            bytes_out=$((bytes_out + opkts * 500))
-        fi
-    done < <(netstat -i)
+    # Get the first en0 line with <Link> (hardware stats, not IPv6/DNS entries)
+    local en0_line=$(netstat -i | grep "^en0.*Link" | head -1)
+    
+    if [[ -n "$en0_line" ]]; then
+        # Extract packet counts from the line
+        # en0 line format: en0 1500 <Link#17> ca:e7:14:e6:84:de Ipkts Ierrs Opkts Oerrs
+        local ipkts=$(echo "$en0_line" | awk '{print $5}')
+        local opkts=$(echo "$en0_line" | awk '{print $7}')
+        
+        # Estimate bytes: packets * average packet size (500 bytes)
+        bytes_in=$((ipkts * 500))
+        bytes_out=$((opkts * 500))
+    fi
+    
+    # Load previous state from file
+    local STATE_FILE="/tmp/.network-state"
+    local prev_bytes_in=0
+    local prev_bytes_out=0
+    local prev_timestamp=0
+    
+    if [[ -f "$STATE_FILE" ]]; then
+        source "$STATE_FILE" 2>/dev/null
+    fi
     
     # Calculate throughput (Mbps) from difference
     local current_time=$(date +%s%N | cut -b1-13)  # milliseconds
-    local time_diff_ms=$((current_time - PREV_TIMESTAMP))
+    local time_diff_ms=$((current_time - prev_timestamp))
     local time_diff_sec=$((time_diff_ms / 1000))
     
     local download_mbps=0
     local upload_mbps=0
     local total_mbps=0
     
-    if [[ $PREV_TIMESTAMP -gt 0 && $time_diff_sec -gt 0 ]]; then
-        local bytes_diff_in=$((bytes_in - PREV_BYTES_IN))
-        local bytes_diff_out=$((bytes_out - PREV_BYTES_OUT))
+    if [[ $prev_timestamp -gt 0 && $time_diff_sec -gt 0 ]]; then
+        local bytes_diff_in=$((bytes_in - prev_bytes_in))
+        local bytes_diff_out=$((bytes_out - prev_bytes_out))
         
         # Convert bytes to Mbps: (bytes / seconds) * 8 / 1,000,000
         # Simplified: (bytes * 8) / (1000000 * seconds)
@@ -121,9 +126,12 @@ get_network_stats() {
     # Get connection statistics
     local connection_count=$(netstat -an 2>/dev/null | grep -c "ESTABLISHED" || echo "0")
     
-    PREV_BYTES_IN=$bytes_in
-    PREV_BYTES_OUT=$bytes_out
-    PREV_TIMESTAMP=$current_time
+    # Save current state to file for next iteration
+    cat > "$STATE_FILE" << STATE_END
+prev_bytes_in=$bytes_in
+prev_bytes_out=$bytes_out
+prev_timestamp=$current_time
+STATE_END
     
     echo "$download_mbps|$upload_mbps|$total_mbps|$connection_count"
 }
