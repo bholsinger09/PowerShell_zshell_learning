@@ -330,6 +330,33 @@
         }
 
         function updateStats(metrics) {
+            // Only update the stat boxes, don't recreate canvas elements
+            const statBoxes = document.querySelectorAll('.stat-value');
+            if (statBoxes.length >= 5) {
+                statBoxes[0].textContent = metrics.memory + '%';
+                statBoxes[1].textContent = metrics.disk + '%';
+                statBoxes[2].textContent = metrics.cpu_percent.toFixed(1) + '%';
+                statBoxes[3].textContent = metrics.cpu_load.toFixed(2);
+                statBoxes[4].textContent = metrics.battery + '%';
+            }
+            
+            // Update alerts
+            let alertHtml = '';
+            if (metrics.memory > 80) {
+                alertHtml += '<div class="alert-box critical">⚠️ High memory usage: ' + metrics.memory + '%</div>';
+            }
+            if (metrics.cpu_percent > 80) {
+                alertHtml += '<div class="alert-box critical">⚠️ High CPU usage: ' + metrics.cpu_percent.toFixed(1) + '%</div>';
+            }
+            
+            const alertsContainer = document.getElementById('alertsContainer');
+            if (alertsContainer) {
+                alertsContainer.innerHTML = alertHtml;
+            }
+        }
+
+        function initializeDashboard(metrics) {
+            // Initialize dashboard HTML structure (only called once)
             const mainContent = document.getElementById('mainContent');
             
             let html = '<div class="stats-grid">';
@@ -340,15 +367,9 @@
             html += createStatBox('Battery', metrics.battery + '%', '#fa709a');
             html += '</div>';
             
-            // Add alerts if needed
-            if (metrics.memory > 80) {
-                html += '<div class="alert-box critical">⚠️ High memory usage: ' + metrics.memory + '%</div>';
-            }
-            if (metrics.cpu_percent > 80) {
-                html += '<div class="alert-box critical">⚠️ High CPU usage: ' + metrics.cpu_percent.toFixed(1) + '%</div>';
-            }
+            html += '<div id="alertsContainer"></div>';
             
-            // Add charts
+            // Add charts with canvas elements
             html += '<div class="charts-grid">';
             html += '<div class="card"><h2>💾 Memory Usage</h2><div class="chart-container"><canvas id="memoryChart"></canvas></div></div>';
             html += '<div class="card"><h2>💿 Disk Usage</h2><div class="chart-container"><canvas id="diskChart"></canvas></div></div>';
@@ -426,8 +447,8 @@
             });
         }
 
-        function renderDashboard() {
-            updateStats({
+        async function renderDashboard() {
+            initializeDashboard({
                 memory: 0,
                 disk: 0,
                 cpu_percent: 0,
